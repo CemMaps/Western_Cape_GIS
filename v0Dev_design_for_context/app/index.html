@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Western Cape Map Explorer</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Leaflet MarkerCluster -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<!-- Leaflet MiniMap -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.css"/>
+<script src="https://unpkg.com/leaflet-minimap@3.6.1/dist/Control.MiniMap.min.js"></script>
+
+<!-- FlatGeobuf -->
+<script src="https://cdn.jsdelivr.net/npm/flatgeobuf@3.22.0/dist/flatgeobuf-geojson.min.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- FontAwesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+<!-- Tailwind (utilities only) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+/* ── Design Tokens ──────────────────────────────── */
+:root {
+  --color-primary: #06b6d4;      /* Elegant cyan accent */
+  --color-secondary: #0f172a;    /* Deep navy background */
+  --color-tertiary: #1e293b;     /* Refined slate */
+  --color-accent: #64748b;       /* Soft gray text */
+  --color-border: #1e293b;       /* Subtle borders */
+  --color-hover: #1a2744;        /* Elevated hover state */
+  --color-text-primary: #e2e8f0; /* Light text */
+  --color-text-secondary: #94a3b8;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.2);
+  --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Base ───────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin:0; padding:0; height:100%; overflow:hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+  letter-spacing: 0.3px; }
+* { scrollbar-width:thin; scrollbar-color: var(--color-hover) var(--color-secondary); }
+*::-webkit-scrollbar { width:6px; height:6px; }
+*::-webkit-scrollbar-track { background: var(--color-secondary); }
+*::-webkit-scrollbar-thumb { background: var(--color-hover); border-radius:3px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--color-tertiary); }
+
+/* ── Map fills viewport behind the panel ──────── */
+#map { position:fixed; inset:0; z-index:0; background:#e8eaf0; opacity: 0;
+  animation: fadeIn var(--transition-slow) ease-out 0.2s forwards; }
+
+/* ── App shell ───────────────────────────────── */
+#shell {
+  position:fixed; inset:0; z-index:100;
+  display:flex; pointer-events:none;
+}
+.panel { pointer-events:all; }
+
+/* ── Left sidebar ────────────────────────────── */
+#sidebar {
+  width:290px; min-width:290px; background: var(--color-secondary);
+  display:flex; flex-direction:column; overflow:hidden;
+  border-right:1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  animation: slideInLeft var(--transition-normal) ease-out;
+}
+
+/* ── Map area overlay (left open) ────────────── */
+#map-area {
+  flex:1; position:relative; pointer-events:none;
+}
+
+/* ── Right sidebar ───────────────────────────── */
+#legend-panel {
+  width:250px; min-width:250px; background: var(--color-secondary);
+  display:flex; flex-direction:column; overflow:hidden;
+  border-left:1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  animation: slideInRight var(--transition-normal) ease-out;
+}
+
+/* ── Sidebar header ──────────────────────────── */
+.s-head {
+  background: linear-gradient(135deg, var(--color-secondary), var(--color-tertiary));
+  padding: 16px 14px 12px; border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0; transition: all var(--transition-fast);
+}
+.s-title {
+  font-size: 13px; font-weight: 700; color: var(--color-primary);
+  letter-spacing: 1px; text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px; margin: 0 0 11px;
+  opacity: 0; animation: fadeInDown var(--transition-normal) ease-out 0.1s forwards;
+}
+.s-title-extra { margin-left: auto; opacity: 0.7; transition: opacity var(--transition-fast); }
+.s-title-extra:hover { opacity: 1; }
+
+/* ── Admin boundary toggles ─────────────────── */
+#admin-bar { display:flex; gap:4px; margin-bottom:10px; }
+.adm-btn {
+  flex:1; font-size:9px; font-weight:600; letter-spacing:0.3px;
+  text-transform:uppercase; padding:7px 4px; background: var(--color-tertiary);
+  border:1px solid var(--color-border); color: var(--color-accent);
+  cursor:pointer; transition: all var(--transition-fast); text-align:center;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  border-radius: 4px;
+}
+.adm-btn:hover { background: var(--color-hover); color: var(--color-text-primary);
+  border-color: var(--color-primary); box-shadow: 0 0 8px rgba(6, 182, 212, 0.2); }
+.adm-btn.active { background: rgba(6, 182, 212, 0.15); border-color: var(--color-primary);
+  color: var(--color-primary); box-shadow: inset 0 0 0 1px rgba(6, 182, 212, 0.3); }
+
+/* ── Search ──────────────────────────────────── */
+#search {
+  width:100%; background: rgba(30, 41, 59, 0.6); border:1px solid var(--color-border);
+  color: var(--color-text-primary); padding:9px 12px; font-size:13px; outline:none;
+  border-radius: 6px; transition: all var(--transition-fast);
+  backdrop-filter: blur(4px);
+}
+#search::placeholder { color: var(--color-accent); }
+#search:focus { border-color: var(--color-primary); background: rgba(30, 41, 59, 0.8);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1); }
+
+/* ── Basemap bar ─────────────────────────────── */
+#bm-bar {
+  display:flex; gap:4px; padding:9px 11px;
+  background: var(--color-secondary); border-bottom: 1px solid var(--color-border);
+  flex-shrink:0;
+}
+.bm-btn {
+  flex:1; font-size:9px; font-weight:600; letter-spacing:0.2px;
+  padding:7px 3px; background: var(--color-tertiary); border:1px solid var(--color-border);
+  color: var(--color-accent); cursor:pointer; transition: all var(--transition-fast);
+  text-transform:uppercase; text-align:center; border-radius: 4px;
+}
+.bm-btn:hover { background: var(--color-hover); color: var(--color-text-primary);
+  border-color: var(--color-primary); box-shadow: 0 0 8px rgba(6, 182, 212, 0.2); }
+.bm-btn.active { background: rgba(6, 182, 212, 0.15); border-color: var(--color-primary);
+  color: var(--color-primary); }
+
+/* ── Tab bar ─────────────────────────────────── */
+.tab-bar {
+  display:flex; background: var(--color-secondary);
+  border-bottom: 1px solid var(--color-border); flex-shrink:0;
+}
+.tab-btn {
+  flex:1; padding:11px 5px; background:transparent; border:none;
+  color: var(--color-accent); cursor:pointer; font-size:10px; font-weight:600;
+  letter-spacing:0.3px; border-bottom:2px solid transparent;
+  transition: all var(--transition-fast); text-transform:uppercase;
+}
+.tab-btn:hover { color: var(--color-text-primary); }
+.tab-btn.active { color: var(--color-primary);
+  border-bottom-color: var(--color-primary); box-shadow: inset 0 -2px 0 var(--color-primary); }
+.tab-content { display:none; flex:1; flex-direction:column; min-height:0; }
+.tab-content.active { display:flex; }
+.tab-scroll { flex:1; overflow-y:auto; padding:7px; }
+
+/* ── Favourites / Layer groups ───────────────── */
+#fav-section { display:none; margin-bottom:8px; animation: fadeIn var(--transition-normal) ease-out; }
+.layer-group { margin-bottom:6px; border:1px solid var(--color-border); border-radius: 6px;
+  overflow: hidden; transition: all var(--transition-fast); }
+.layer-group:hover { border-color: var(--color-primary); box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.2); }
+.lg-head {
+  background: var(--color-tertiary); padding: 10px 12px; cursor:pointer;
+  user-select:none; display:flex; align-items:center;
+  justify-content:space-between; font-size:10px; font-weight:600;
+  letter-spacing:0.4px; color: var(--color-accent); transition: all var(--transition-fast);
+  text-transform:uppercase;
+}
+.lg-head:hover { background: var(--color-hover); color: var(--color-text-primary); }
+.lg-head.collapsed .chevron { transform:rotate(-90deg); }
+.chevron { font-size:9px; transition: transform var(--transition-normal); display:inline-block; }
+.lg-body { overflow:hidden; max-height: 500px; transition: max-height var(--transition-normal); }
+.lg-body.hidden { display:none; max-height: 0; }
+
+/* ── Layer item ──────────────────────────────── */
+.litem {
+  display:flex; align-items:center; gap:8px;
+  padding:8px 11px; background: var(--color-secondary);
+  border-bottom:1px solid var(--color-border); transition: all var(--transition-fast);
+  animation: fadeInUp var(--transition-normal) ease-out;
+}
+.litem:hover { background: var(--color-hover); border-bottom-color: var(--color-primary); }
+.litem:last-of-type { border-bottom:none; }
+.litem input[type=checkbox] { width:14px; height:14px; cursor:pointer;
+  accent-color: var(--color-primary); flex-shrink:0; border-radius: 3px;
+  transition: all var(--transition-fast); }
+.litem input[type=checkbox]:hover { transform: scale(1.1); }
+.litem-icon { font-size:12px; width:16px; text-align:center; flex-shrink:0;
+  color: var(--color-primary); opacity: 0.8; }
+.litem-name {
+  flex:1; font-size:12px; color: var(--color-text-primary); min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-weight: 500;
+}
+.litem-name.loading { color: var(--color-primary); animation: pulse 1.5s ease-in-out infinite; }
+.litem-star {
+  background:none; border:none; color: var(--color-accent); cursor:pointer;
+  font-size:12px; padding:3px 4px; transition: all var(--transition-fast); flex-shrink:0;
+  opacity: 0.6;
+}
+.litem-star:hover { color: var(--color-primary); opacity: 1; transform: scale(1.15); }
+.litem-star.on { color: var(--color-primary); opacity: 1; }
+
+/* Opacity row */
+.op-row { padding:6px 11px 8px 35px; background: var(--color-secondary);
+  border-bottom:1px solid var(--color-border); }
+.op-row.hidden { display:none; }
+input[type=range].op-slider {
+  -webkit-appearance:none; appearance:none; width:100%; height:3px;
+  background:linear-gradient(to right, var(--color-primary) var(--v,80%), var(--color-border) var(--v,80%));
+  border-radius:2px; outline:none; transition: all var(--transition-fast);
+}
+input[type=range].op-slider:hover { height: 4px; }
+input[type=range].op-slider::-webkit-slider-thumb {
+  -webkit-appearance:none; width:12px; height:12px; border-radius:50%;
+  background: var(--color-primary); cursor:pointer; border:2px solid var(--color-secondary);
+  box-shadow: 0 2px 6px rgba(6, 182, 212, 0.4); transition: all var(--transition-fast);
+}
+input[type=range].op-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2); box-shadow: 0 4px 10px rgba(6, 182, 212, 0.6);
+}
+input[type=range].op-slider::-moz-range-thumb {
+  width:12px; height:12px; border-radius:50%;
+  background: var(--color-primary); cursor:pointer; border:2px solid var(--color-secondary);
+  box-shadow: 0 2px 6px rgba(6, 182, 212, 0.4);
+}
+input[type=range].op-slider::-moz-range-thumb:hover {
+  transform: scale(1.2); box-shadow: 0 4px 10px rgba(6, 182, 212, 0.6);
+}
+
+/* ── Tool buttons ────────────────────────────── */
+.tool-btn {
+  display:flex; align-items:center; gap:10px; width:100%; padding:11px 13px;
+  background: var(--color-tertiary); border:1px solid var(--color-border);
+  color: var(--color-text-secondary); font-size:12px; font-weight:500;
+  cursor:pointer; margin-bottom:5px; transition: all var(--transition-fast);
+  text-align:left; letter-spacing:0.2px; border-radius: 6px;
+}
+.tool-btn:hover { background: var(--color-hover); color: var(--color-text-primary);
+  border-color: var(--color-primary); box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.2);
+  transform: translateY(-1px); }
+.tool-btn.active { background: rgba(6, 182, 212, 0.15); color: var(--color-primary);
+  border-color: var(--color-primary); }
+.tool-btn i { width:16px; text-align:center; }
+
+/* ── Legend (right panel) ────────────────────── */
+.leg-head {
+  background: linear-gradient(135deg, var(--color-secondary), var(--color-tertiary));
+  padding: 14px 14px; border-bottom: 1px solid var(--color-border);
+  flex-shrink:0; animation: fadeInDown var(--transition-normal) ease-out 0.2s;
+}
+.leg-head h2 {
+  font-size: 12px; font-weight: 700; color: var(--color-primary);
+  letter-spacing: 1px; text-transform:uppercase;
+  margin:0; display:flex; align-items:center; gap:8px;
+}
+.leg-stats { display:flex; border-bottom:1px solid var(--color-border); flex-shrink:0; }
+.leg-stat { flex:1; padding:9px 11px; text-align:center;
+  border-right:1px solid var(--color-border); transition: all var(--transition-fast); }
+.leg-stat:hover { background: var(--color-hover); }
+.leg-stat:last-child { border-right:none; }
+.leg-stat-lbl { font-size:9px; color: var(--color-accent); text-transform:uppercase;
+  letter-spacing:0.4px; font-weight: 600; }
+.leg-stat-val { font-size:18px; font-weight:700; color: var(--color-primary);
+  font-family:monospace; margin-top: 4px; }
+#leg-scroll { flex:1; overflow-y:auto; padding:8px; }
+#leg-empty { color: var(--color-accent); text-align:center; padding:24px 12px;
+  font-size:12px; animation: fadeIn var(--transition-normal); }
+
+.leg-entry { margin-bottom:8px; background: var(--color-tertiary); border:1px solid var(--color-border);
+  overflow:hidden; border-radius: 6px; transition: all var(--transition-fast);
+  animation: fadeInUp var(--transition-normal) ease-out; }
+.leg-entry:hover { border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.2); }
+.leg-entry-hdr {
+  padding:9px 11px; display:flex; align-items:center; gap:8px;
+  border-bottom:1px solid var(--color-border); background: rgba(6, 182, 212, 0.05);
+  transition: all var(--transition-fast);
+}
+.leg-entry:hover .leg-entry-hdr { background: rgba(6, 182, 212, 0.1); }
+.leg-entry-name {
+  flex:1; font-size:12px; font-weight:600; color: var(--color-text-primary);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
+}
+.leg-swatch { width:12px; height:12px; flex-shrink:0;
+  border:1px solid rgba(255,255,255,0.15); border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }
+.leg-cats { padding:6px 11px 8px; }
+.leg-cat-row { display:flex; align-items:center; gap:6px; padding:3px 0;
+  transition: all var(--transition-fast); }
+.leg-cat-row:hover { transform: translateX(2px); }
+.leg-cat-sw { width:11px; height:11px; flex-shrink:0;
+  border:1px solid rgba(255,255,255,0.15); border-radius: 2px; }
+.leg-cat-lbl { font-size:11px; color: var(--color-text-secondary); }
+.leg-gradient { height:10px; border-radius:3px; margin:6px 0 3px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); }
+.leg-grad-lbls { display:flex; justify-content:space-between;
+  font-size:9px; color: var(--color-accent); padding:2px 0 6px; font-weight: 600; }
+
+/* ── Popups ──────────────────────────────────── */
+.leaflet-popup-content-wrapper {
+  background: #fff !important; border-radius:8px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.25) !important; padding:0 !important;
+  border: 1px solid #f0f0f0 !important; animation: popIn var(--transition-fast) ease-out !important;
+}
+.leaflet-popup-content { margin:0 !important; min-width:180px; max-width:280px; }
+.leaflet-popup-tip { background:#fff !important; }
+.pu-body { padding:14px 16px 10px; }
+.pu-layer { font-size:10px; color:#94a3af; text-transform:uppercase;
+  letter-spacing:0.4px; margin-bottom:4px; font-weight: 600; }
+.pu-name { font-size:15px; font-weight:700; color:#0f172a; margin-bottom:12px; }
+.pu-zoom {
+  display:block; width:100%; padding:10px; background: linear-gradient(135deg, #06b6d4, #0891b2);
+  border:none; font-size:11px; font-weight:700; color:#fff; letter-spacing:0.4px;
+  text-transform:uppercase; cursor:pointer; transition: all var(--transition-fast);
+  border-radius: 6px;
+}
+.pu-zoom:hover { transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(6, 182, 212, 0.3); }
+.pu-pie { padding:12px 16px 14px; border-top:1px solid #f0f0f0; }
+
+/* ── Measure panel ───────────────────────────── */
+#measure-panel {
+  position:absolute; bottom:32px; left:50%; transform:translateX(-50%) scaleY(0);
+  transform-origin: bottom center;
+  background: rgba(15, 23, 42, 0.95); border:1px solid rgba(6, 182, 212, 0.3);
+  color: var(--color-text-primary); padding:12px 18px; font-size:12px;
+  pointer-events:all; backdrop-filter: blur(10px);
+  align-items:center; gap:14px; white-space:nowrap; z-index:500;
+  border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,0.3);
+  animation: slideUp var(--transition-fast) ease-out forwards;
+}
+#measure-panel.vis { display:flex; animation: slideUp var(--transition-fast) ease-out; }
+#measure-panel:not(.vis) { display:none; }
+#m-dist { font-weight:700; color: var(--color-primary); font-family:monospace;
+  font-size:15px; animation: pulse 2s ease-in-out infinite; }
+.m-clear {
+  background: linear-gradient(135deg, #ef4444, #dc2626); border:none; color:#fff;
+  padding:6px 12px; font-size:10px; font-weight:700; cursor:pointer;
+  border-radius: 5px; transition: all var(--transition-fast);
+}
+.m-clear:hover { transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); }
+
+/* ── Debug ───────────────────────────────────── */
+#dbg-wrap { border-top:1px solid var(--color-border); flex-shrink:0;
+  transition: all var(--transition-fast); }
+#dbg-wrap.hidden { display:none; opacity: 0; }
+#dbg-log {
+  background: rgba(0, 0, 0, 0.3); color: var(--color-primary); padding:8px 10px;
+  font-size:10px; font-family:'Courier New',monospace;
+  max-height:100px; overflow-y:auto;
+}
+
+/* ── Leaflet controls escape stacking context ── */
+.leaflet-top.leaflet-left   { position:fixed !important; left:300px !important; z-index:500 !important; top:0; }
+.leaflet-top.leaflet-right  { position:fixed !important; right:260px !important; z-index:500 !important; top:0; }
+.leaflet-bottom.leaflet-left  { position:fixed !important; left:300px !important; z-index:500 !important; bottom:0; }
+.leaflet-bottom.leaflet-right { position:fixed !important; right:260px !important; z-index:500 !important; bottom:0; }
+
+/* ── POI Tooltips / Labels ───────────────────── */
+.poi-label {
+  background:#fff; border:1px solid #e2e8f0; color:#0f172a;
+  font-size:10px; font-weight:600; padding:3px 7px;
+  border-radius:4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  white-space:nowrap; pointer-events:none;
+  opacity:0; transition: all var(--transition-fast);
+}
+.leaflet-tooltip.poi-label::before { display:none; }
+/* Labels become visible when map has show-labels class AND zoom is adequate */
+#map.show-labels .poi-label { opacity:1; animation: popIn var(--transition-fast) ease-out; }
+/* Per-layer label suppression: data-hide-labels contains layer names */
+#map.show-labels .poi-label[data-layer-hide] { opacity:0; }
+
+/* ── Drag-and-drop ───────────────────────────── */
+.litem[draggable=true] { cursor:grab; }
+.litem.dragging { opacity:0.45; background: var(--color-hover) !important; }
+.litem.drag-over { border-top:2px solid var(--color-primary) !important;
+  background: rgba(6, 182, 212, 0.1) !important; }
+.layer-group { transition: all var(--transition-fast); }
+.layer-group.drag-grp-over > .lg-head { border-top:2px solid var(--color-primary);
+  background: var(--color-hover); }
+
+/* ── MiniMap override ────────────────────────── */
+.leaflet-control-minimap { border:2px solid var(--color-border) !important;
+  border-radius: 6px !important; box-shadow: var(--shadow-md) !important; }
+
+/* ── Cluster override ────────────────────────── */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large { background-color: rgba(6, 182, 212, 0.2) !important;
+  animation: scaleIn var(--transition-normal) ease-out !important; }
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+  background: linear-gradient(135deg, #06b6d4, #0891b2) !important;
+  color:#fff !important; font-weight:700 !important;
+  box-shadow: 0 4px 12px rgba(6, 182, 212, 0.4) !important;
+}
+
+/* ── POI icon ────────────────────────────────── */
+.poi-pin {
+  display:flex; align-items:center; justify-content:center;
+  width:28px; height:28px; border-radius:50%; border:2px solid #fff;
+  font-size:12px; box-shadow: 0 4px 12px rgba(6, 182, 212, 0.4);
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  animation: popIn var(--transition-fast) ease-out;
+}
+
+/* ── Animations ─────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px) scaleY(0); }
+  to { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+</style>
+</head>
+<body>
+
+<!-- MAP (behind everything) -->
+<div id="map"></div>
+
+<!-- APP SHELL -->
+<div id="shell">
+
+  <!-- ══ LEFT SIDEBAR ══════════════════════════════ -->
+  <div id="sidebar" class="panel">
+
+    <div class="s-head">
+      <p class="s-title">
+        <i class="fa-solid fa-map-location-dot"></i>
+        WC Map Explorer
+        <span class="s-title-extra">
+          <button onclick="toggleDebug()" title="Debug" style="background:none;border:none;color:#374151;cursor:pointer;font-size:11px;">
+            <i class="fa-solid fa-terminal"></i>
+          </button>
+        </span>
+      </p>
+
+      <!-- Admin toggles -->
+      <div style="font-size:9px;font-weight:700;letter-spacing:0.6px;color:#475569;text-transform:uppercase;margin-bottom:4px;">Select Admin Boundaries</div>
+      <div id="admin-bar">
+        <button class="adm-btn" id="adm-District_municipalities" title="District Municipalities"
+          onclick="toggleAdmin('District_municipalities',this)">Districts</button>
+        <button class="adm-btn" id="adm-Local_municipalities" title="Local Municipalities"
+          onclick="toggleAdmin('Local_municipalities',this)">Local Munic.</button>
+        <button class="adm-btn" id="adm-Wards_2020" title="Wards 2020"
+          onclick="toggleAdmin('Wards_2020',this)">Wards</button>
+      </div>
+
+      <input id="search" type="search" placeholder="Search layers…" oninput="filterLayers(this.value)">
+    </div>
+
+    <!-- Basemap selector -->
+    <div style="padding:5px 9px 2px;background:#0a0f1e;font-size:9px;font-weight:700;letter-spacing:0.6px;color:#475569;text-transform:uppercase;">Select Basemap</div>
+    <div id="bm-bar">
+      <button class="bm-btn active" id="bm-streets" onclick="setBasemap('streets')">Streets</button>
+      <button class="bm-btn" id="bm-satellite" onclick="setBasemap('satellite')">Satellite</button>
+      <button class="bm-btn" id="bm-topo" onclick="setBasemap('topo')">Topo</button>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="showTab('layers')">&#9776; Layers</button>
+      <button class="tab-btn" onclick="showTab('tools')">&#9881; Tools</button>
+    </div>
+
+    <!-- LAYERS TAB -->
+    <div id="tab-layers" class="tab-content active">
+      <div class="tab-scroll">
+        <!-- Favourites -->
+        <div id="fav-section">
+          <div class="layer-group">
+            <div class="lg-head" onclick="toggleGroup(this)">
+              <span><i class="fa-solid fa-star" style="color:#fbbf24;margin-right:5px;font-size:9px;"></i>FAVOURITES</span>
+              <span class="chevron">&#8964;</span>
+            </div>
+            <div class="lg-body" id="fav-body"></div>
+          </div>
+        </div>
+
+        <!-- Main layer groups -->
+        <div id="layers-root"></div>
+      </div>
+    </div>
+
+    <!-- TOOLS TAB -->
+    <div id="tab-tools" class="tab-content">
+      <div class="tab-scroll">
+        <button class="tool-btn" onclick="layerSummary()">
+          <i class="fa-solid fa-chart-bar"></i> Layer Summary
+        </button>
+      </div>
+    </div>
+
+    <!-- Debug log -->
+    <div id="dbg-wrap" class="hidden">
+      <div id="dbg-log"></div>
+    </div>
+  </div>
+
+  <!-- ══ MAP OVERLAY AREA ══════════════════════════ -->
+  <div id="map-area">
+    <div id="measure-panel">
+      <i class="fa-solid fa-ruler-combined" style="color:#fbbf24;"></i>
+      Total: <span id="m-dist">0.00 km</span>
+      <span style="color:#475569;font-size:10px;">· Click = add point · Dbl-click = finish · ESC = cancel</span>
+      <button class="m-clear" onclick="clearMeasure()"><i class="fa-solid fa-xmark"></i> Clear</button>
+    </div>
+  </div>
+
+  <!-- ══ LEGEND PANEL ══════════════════════════════ -->
+  <div id="legend-panel" class="panel">
+    <div class="leg-head">
+      <h2><i class="fa-solid fa-swatchbook"></i> Legend</h2>
+    </div>
+
+    <div id="leg-scroll">
+      <div id="leg-empty">
+        <i class="fa-solid fa-layer-group" style="font-size:22px;margin-bottom:7px;display:block;color:#253047;"></i>
+        No active layers.<br>Enable layers in the panel.
+      </div>
+      <div id="leg-box"></div>
+    </div>
+  </div>
+
+</div><!-- /shell -->
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ─────────────────────────────────────────────────────────────────
+   CONSTANTS
+───────────────────────────────────────────────────────────────── */
+const WC_CENTER = [-33.25, 21.0];
+const WC_BOUNDS = L.latLngBounds([-34.9, 17.8], [-31.0, 24.2]);
+const ZOOM_MIN  = 7;
+const POINT_MIN_ZOOM = 11;   // points only show at this zoom+
+const DOT_MIN_ZOOM   = 9;    // mixed-ward dots show at this zoom+
+const LABEL_ZOOM     = 14;   // POI name labels show at this zoom+
+
+/* ─────────────────────────────────────────────────────────────────
+   LAYER GROUPS (sidebar organisation)
+───────────────────────────────────────────────────────────────── */
+const LAYER_GROUPS = {
+  'Road Trips': {
+    icon:'fa-route',
+    layers:['Petrol_stations','Parking','Toilets','RuinsArchaeology','Caves',
+            'Food','Accommodation','MountainPeaks','Viewpoints','Attractions','ATM','Museum']
+  },
+  'Demographics': {
+    icon:'fa-users',
+    layers:['Predominant_Ethnic_Group_Wards_2022','Predominant_Language_Wards_2011',
+            'Index_of_Multiple_Deprivation','PopulationDensity']
+  },
+  'Nature': {
+    icon:'fa-leaf',
+    layers:['Geology','Wetlands','ProtectedAreas_SAPAD',
+            'Rivers_Streams_Waterways','WaterbodiesReservoirs']
+  },
+  'Amenities': {
+    icon:'fa-kit-medical',
+    layers:['Bank','ChemistPharmacy','DoctorsClinicHospital']
+  }
+};
+
+const ADMIN_LAYERS = ['District_municipalities','Local_municipalities','Wards_2020'];
+
+// Hierarchical admin boundary styles (district thickest → wards thinnest)
+const ADMIN_STYLES = {
+  District_municipalities: {color:'#1e293b', weight:3.0, opacity:0.9,  dashArray:null},
+  Local_municipalities:    {color:'#334155', weight:1.8, opacity:0.85, dashArray:'6,3'},
+  Wards_2020:              {color:'#64748b', weight:0.7, opacity:0.75, dashArray:'3,4'}
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   POI ICONS (thematic, per layer)
+───────────────────────────────────────────────────────────────── */
+const POI = {
+  Caves:                    {icon:'fa-vault',                    bg:'#292524',col:'#d4a76a'},
+  RuinsArchaeology:         {icon:'fa-landmark-dome',            bg:'#1c1a02',col:'#d4a76a'},
+  Food:                     {icon:'fa-utensils',                 bg:'#dc2626',col:'#fff'},
+  Accommodation:            {icon:'fa-bed',                      bg:'#1d4ed8',col:'#fff'},
+  MountainPeaks:            {icon:'fa-mountain-sun',             bg:'#166534',col:'#fff'},
+  Viewpoints:               {icon:'fa-binoculars',               bg:'#0e7490',col:'#fff'},
+  Attractions:              {icon:'fa-camera-retro',             bg:'#7e22ce',col:'#fff'},
+  ATM:                      {icon:'fa-money-bill-wave',          bg:'#15803d',col:'#fff'},
+  Parking:                  {icon:'fa-square-parking',           bg:'#1d4ed8',col:'#fff'},
+  Petrol_stations:          {icon:'fa-gas-pump',                 bg:'#92400e',col:'#fff'},
+  Toilets:                  {icon:'fa-restroom',                 bg:'#4c1d95',col:'#fff'},
+  Museum:                   {icon:'fa-building-columns',         bg:'#0c4a6e',col:'#fff'},
+  Bank:                     {icon:'fa-piggy-bank',               bg:'#14532d',col:'#fff'},
+  ChemistPharmacy:          {icon:'fa-prescription-bottle-medical', bg:'#991b1b',col:'#fff'},
+  DoctorsClinicHospital:    {icon:'fa-stethoscope',              bg:'#134e4a',col:'#fff'}
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   COLOUR SCHEMES
+───────────────────────────────────────────────────────────────── */
+const ETHNIC_COLORS = {
+  'Black African':'#c0392b', 'African':'#c0392b',
+  'Coloured':'#e67e22',
+  'Indian or Asian':'#8e44ad', 'Indian/Asian':'#8e44ad',
+  'White':'#2980b9',
+  'Other':'#7f8c8d',
+  'Not Specified':'#bdc3c7',
+  'Mixed (No Majority)': null   // transparent polygon → dot at centroid
+};
+const LANG_COLORS = {
+  'Afrikaans':'#e67e22','isiXhosa':'#c0392b','English':'#2980b9',
+  'isiZulu':'#27ae60','isiNdebele':'#8e44ad','Setswana':'#16a085',
+  'SeSotho':'#d35400','Sepedi':'#f39c12','Tshivenda':'#2ecc71',
+  'Xitsonga':'#e74c3c','siSwati':'#9b59b6','Sign Language':'#95a5a6',
+  'Mixed (No Majority)': null,
+  'Other':'#7f8c8d'
+};
+const GEOLOGY_COLORS = {
+  'Quaternary':'#f7dc6f','Alluvium':'#f0e68c','Aeolianite':'#fdebd0',
+  'Calcarenite':'#fad7a0','Colluvium':'#f5cba7','Fluvial':'#f9e79f','Landfill':'#d5dbdb',
+  'Table Mountain Group':'#d4a76a','TMG':'#d4a76a','Sandstone':'#c8a165','Quartzite':'#e8d5b7',
+  'Peninsula Formation':'#d4a76a','Pakhuis Formation':'#c9a87c','Cedarberg Formation':'#a0856a',
+  'Bokkeveld Group':'#85929e','Bokkeveld':'#85929e','Shale':'#8fa3b1',
+  'Mudstone':'#9aabb7','Siltstone':'#a2b4be',
+  'Witteberg Group':'#b0c4a0','Witteberg':'#b0c4a0',
+  'Malmesbury Group':'#7d9b76','Malmesbury':'#7d9b76',
+  'Phyllite':'#6b8f71','Schist':'#6d8f6a','Slate':'#778899',
+  'Cape Granite Suite':'#f1948a','Cape Granite':'#f1948a','Granite':'#f1948a',
+  'Granodiorite':'#f4a9a0','Gneiss':'#e88080','Plutonic':'#f08080',
+  'Karoo Supergroup':'#a0522d','Karoo':'#a0522d','Ecca Group':'#b07040',
+  'Beaufort Group':'#c08050','Dolerite':'#5d6d7e','Basalt':'#4a5568',
+  'Limestone':'#a9cce3','Dolomite':'#aed6f1','Marble':'#d2e9f7',
+  'Conglomerate':'#c4a882','Breccia':'#b8a090','Other':'#bdc3c7','Unknown':'#d5dbdb'
+};
+
+const CAT_CFG = {
+  Predominant_Ethnic_Group_Wards_2022:{scheme:ETHNIC_COLORS,type:'ethnic',  hint:'Predominan'},
+  Predominant_Language_Wards_2011:    {scheme:LANG_COLORS,  type:'language', hint:'Predominan'},
+  Geology:                            {scheme:GEOLOGY_COLORS,type:'geology', hint:'GEOLOGY'},
+  Index_of_Multiple_Deprivation:      {type:'imd',                           hint:'IMD_Score'}
+};
+
+const BLUE_LAYERS = new Set(['Rivers_Streams_Waterways','WaterbodiesReservoirs']);
+const BLUE = '#3b82f6';
+
+/* Fallback palette */
+const PALETTE = ['#f43f5e','#f97316','#eab308','#22c55e','#06b6d4',
+                 '#6366f1','#8b5cf6','#d946ef','#14b8a6','#84cc16',
+                 '#ec4899','#f59e0b','#10b981','#a78bfa','#34d399'];
+const colorMap = {};
+let palIdx = 0;
+[...ADMIN_LAYERS, ...Object.values(LAYER_GROUPS).flatMap(g=>g.layers)]
+  .forEach(f=>{ if(!colorMap[f]) colorMap[f]=PALETTE[palIdx++%PALETTE.length]; });
+
+/* ─────────────────────────────────────────────────────────────────
+   APP STATE
+───────────────────────────────────────────────────────────────── */
+const st = {
+  layers:   {},         // name→{layer,markersGroup,dotsGroup,…}
+  admins:   {},         // name→bool
+  favs:     new Set(),
+  labelsOn: true,
+  measuring: false,
+  mPts:[], mTotal:0,
+  measureLayer: null,
+  wcBounds: null,
+  wcLoaded: false
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   MAP INIT
+───────────────────────────────────────────────────────────────── */
+const map = L.map('map', {
+  zoomControl: true,
+  minZoom: ZOOM_MIN,
+  maxBounds: WC_BOUNDS.pad(0.4),
+  maxBoundsViscosity: 0.9
+}).setView(WC_CENTER, ZOOM_MIN);
+
+// Basemaps
+const BM = {
+  streets:   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    {attribution:'© CartoDB', maxZoom:19}),
+  satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {attribution:'© Esri', maxZoom:19}),
+  topo:      L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    {attribution:'© OpenTopoMap', maxZoom:17})
+};
+BM.streets.addTo(map);
+let curBM = 'streets';
+
+window.setBasemap = function(name) {
+  if (curBM === name) return;
+  map.removeLayer(BM[curBM]);
+  BM[name].addTo(map);
+  curBM = name;
+  document.querySelectorAll('.bm-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('bm-'+name).classList.add('active');
+};
+
+// Scale bar
+L.control.scale({imperial:false, maxWidth:150, position:'bottomleft'}).addTo(map);
+
+// Dedicated high-z-index pane for WC mask so it clips ALL layers incl. markers
+map.createPane('maskPane');
+map.getPane('maskPane').style.zIndex = '650';
+map.getPane('maskPane').style.pointerEvents = 'none';
+
+// MiniMap
+new L.Control.MiniMap(
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'),
+  {toggleDisplay:true, minimized:false, width:130, height:95, zoomLevelOffset:-5, position:'bottomright'}
+).addTo(map);
+
+// ── Custom canvas widget controls ────────────────────────────
+const WidgetBar = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+    container.style.cssText = 'border:none;background:transparent;box-shadow:none;display:flex;flex-direction:column;gap:2px;';
+
+    // Home / Reset view
+    const home = L.DomUtil.create('button', 'map-ctrl-btn', container);
+    home.innerHTML = '<i class="fa-solid fa-house"></i>';
+    home.title = 'Reset to Western Cape';
+    L.DomEvent.disableClickPropagation(home);
+    L.DomEvent.on(home, 'click', () => window.resetView());
+
+    // Measure
+    const meas = L.DomUtil.create('button', 'map-ctrl-btn', container);
+    meas.id = 'ctrl-measure';
+    meas.innerHTML = '<i class="fa-solid fa-ruler-combined"></i>';
+    meas.title = 'Measure distance (click points; double-click to finish; ESC to cancel)';
+    L.DomEvent.disableClickPropagation(meas);
+    L.DomEvent.on(meas, 'click', () => window.toggleMeasure());
+
+    return container;
+  }
+});
+new WidgetBar().addTo(map);
+
+// Measure polylines layer
+st.measureLayer = L.featureGroup().addTo(map);
+
+// Zoom events
+map.on('zoomend', () => { updatePointVis(); updateDotVis(); });
+
+// Load mask + fit bounds
+map.whenReady(() => { loadMask(); });
+
+/* ─────────────────────────────────────────────────────────────────
+   WC MASK  (inverted polygon dims everything outside province)
+───────────────────────────────────────────────────────────────── */
+async function loadMask() {
+  try {
+    const r = await fetch('data/Western_Cape.fgb');
+    if (!r.ok) { fallbackView(); return; }
+    const feats = [];
+    for await (const f of flatgeobuf.deserialize(r.body)) feats.push(f);
+    if (!feats.length) { fallbackView(); return; }
+
+    // Gather all outer rings as [lat,lng] arrays
+    const rings = [];
+    feats.forEach(f => {
+      const g = f.geometry;
+      const polys = g.type==='Polygon'      ? [g.coordinates]
+                  : g.type==='MultiPolygon' ?  g.coordinates
+                  : [];
+      polys.forEach(poly => rings.push(poly[0].map(c=>[c[1],c[0]])));
+    });
+    if (!rings.length) { fallbackView(); return; }
+
+    // World outer ring + WC rings = donut mask
+    // Placed in maskPane (z:650) so it covers all data layers AND markers outside WC
+    const world = [[85,-180],[85,180],[-85,180],[-85,-180],[85,-180]];
+    L.polygon([world, ...rings], {
+      color:'#475569', weight:2,
+      fillColor:'#cbd5e1', fillOpacity:0.62,
+      interactive:false, pane:'maskPane'
+    }).addTo(map);
+
+    // Compute tight bounds for resetView
+    const lats = rings.flatMap(r=>r.map(c=>c[0]));
+    const lngs = rings.flatMap(r=>r.map(c=>c[1]));
+    st.wcBounds = L.latLngBounds(
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)]
+    );
+    st.wcLoaded = true;
+    map.fitBounds(st.wcBounds, {padding:[18,18]});
+    log('WC mask ready');
+  } catch(e) { log('Mask err: '+e.message, true); fallbackView(); }
+}
+
+function fallbackView() { map.fitBounds(WC_BOUNDS, {padding:[18,18]}); }
+
+window.resetView = function() {
+  map.fitBounds(st.wcLoaded ? st.wcBounds : WC_BOUNDS, {padding:[18,18]});
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   DEBUG
+───────────────────────────────────────────────────────────────── */
+function log(msg, err=false) {
+  const el = document.getElementById('dbg-log');
+  const ts = new Date().toLocaleTimeString();
+  el.insertAdjacentHTML('beforeend',
+    `<div style="color:${err?'#f87171':'#22d3ee'}">[${ts}] ${msg}</div>`);
+  el.scrollTop = el.scrollHeight;
+}
+function toggleDebug() {
+  document.getElementById('dbg-wrap').classList.toggle('hidden');
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   TABS
+───────────────────────────────────────────────────────────────── */
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  const btn = [...document.querySelectorAll('.tab-btn')]
+    .find(b=>b.textContent.toLowerCase().includes(name.slice(0,5)));
+  if (btn) btn.classList.add('active');
+}
+window.showTab = showTab;
+
+/* ─────────────────────────────────────────────────────────────────
+   GROUP TOGGLE
+───────────────────────────────────────────────────────────────── */
+function toggleGroup(hdr) {
+  hdr.classList.toggle('collapsed');
+  hdr.nextElementSibling.classList.toggle('hidden');
+}
+window.toggleGroup = toggleGroup;
+
+/* ─────────────────────────────────────────────────────────────────
+   ADMIN BOUNDARY TOGGLES
+───────────────────────────────────────────────────────────────── */
+window.toggleAdmin = async function(name, btn) {
+  if (st.admins[name]) {
+    // OFF
+    const d = st.layers[name];
+    if (d?.layer && map.hasLayer(d.layer)) map.removeLayer(d.layer);
+    delete st.layers[name];
+    st.admins[name] = false;
+    btn.classList.remove('active');
+    updateStats(); renderLegend(); return;
+  }
+  st.admins[name] = true;
+  btn.classList.add('active');
+  if (st.layers[name]) { st.layers[name].layer.addTo(map); updateStats(); renderLegend(); return; }
+
+  try {
+    const r = await fetch(`data/${name}.fgb`);
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const feats = [];
+    for await (const f of flatgeobuf.deserialize(r.body)) feats.push(f);
+    const as = ADMIN_STYLES[name] || {color:'#64748b',weight:1.2,opacity:0.8};
+    const admStyle = () => ({...as, fillOpacity:0, fillColor:'transparent'});
+    const gj = L.geoJSON({type:'FeatureCollection',features:feats}, {
+      style: admStyle,
+      onEachFeature: (feat,lyr) => attachPopup(name, feat, lyr)
+    }).addTo(map);
+    st.layers[name] = {layer:gj, markersGroup:null, dotsGroup:null,
+                       color: as.color, featureCount:feats.length, isAdmin:true};
+    log(`${name}: ${feats.length} features`);
+    updateStats(); renderLegend();
+  } catch(e) {
+    log(`Admin error ${name}: ${e.message}`, true);
+    st.admins[name]=false; btn.classList.remove('active');
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   POPUP HELPER
+───────────────────────────────────────────────────────────────── */
+function getFeatureName(props) {
+  if (!props) return 'Unknown';
+  const candidates = ['name','Name','NAME','NAM','nam','WARD_NAME','ward_name',
+    'MUNIC_NAME','LGC_NAME','DIS_MUNIC','title','Title','TITLE'];
+  for (const k of candidates) {
+    if (props[k] && String(props[k]).trim()) return String(props[k]).trim();
+  }
+  for (const k in props) {
+    if (k.toLowerCase().includes('name') && props[k]) return String(props[k]).trim();
+  }
+  return 'Unknown';
+}
+
+let _popupLayerRef = null;
+function attachPopup(fileName, feat, lyr) {
+  const props    = feat.properties || {};
+  const dispName = getFeatureName(props);
+  const label    = fileName.replace(/_/g,' ');
+  const cfg      = CAT_CFG[fileName];
+  const isDemog  = cfg && (cfg.type==='ethnic'||cfg.type==='language');
+
+  const pieId = 'pie-' + Math.random().toString(36).slice(2);
+  const html = `
+    <div class="pu-body">
+      <div class="pu-layer">${label}</div>
+      <div class="pu-name">${dispName}</div>
+    </div>
+    ${isDemog ? `<div class="pu-pie" id="${pieId}"></div>` : ''}
+    <button class="pu-zoom" onclick="popZoom()">
+      <i class="fa-solid fa-expand"></i>&nbsp; Zoom To Feature
+    </button>`;
+
+  lyr.bindPopup(html, {maxWidth:280, minWidth:180});
+  lyr.on('popupopen', () => {
+    _popupLayerRef = lyr;
+    if (isDemog) renderPie(pieId, props, cfg.type);
+  });
+}
+
+window.popZoom = function() {
+  const lyr = _popupLayerRef;
+  if (!lyr) return;
+  if (lyr.getBounds) { map.fitBounds(lyr.getBounds(), {padding:[40,40],maxZoom:15}); return; }
+  if (lyr.getLatLng) { map.setView(lyr.getLatLng(), 15); }
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   PIE CHART (Chart.js)
+───────────────────────────────────────────────────────────────── */
+const _charts = {};
+function renderPie(containerId, props, type) {
+  const cont = document.getElementById(containerId);
+  if (!cont) return;
+  const scheme = type==='ethnic' ? ETHNIC_COLORS : LANG_COLORS;
+
+  // Find numeric pct fields matching scheme categories
+  const data = {};
+  for (const k in props) {
+    const v = props[k];
+    if (typeof v !== 'number' || v <= 0) continue;
+    const cat = Object.keys(scheme).find(c =>
+      k.toLowerCase().includes(c.toLowerCase().replace(/ /g,'_').slice(0,5)) ||
+      c.toLowerCase().includes(k.toLowerCase().replace(/_/g,' ').slice(0,6))
+    );
+    if (cat && !cat.toLowerCase().includes('mixed')) data[cat] = v;
+  }
+  // Fallback: any pct-like numeric fields
+  if (Object.keys(data).length===0) {
+    for (const k in props) {
+      const v = props[k];
+      if (typeof v==='number' && v>0 && v<=100 &&
+         (k.toLowerCase().includes('pct')||k.toLowerCase().includes('perc')||k.toLowerCase().includes('prop'))) {
+        data[k] = v;
+      }
+    }
+  }
+
+  if (Object.keys(data).length===0) {
+    cont.innerHTML='<div style="font-size:10px;color:#94a3b8;padding:4px 0;">No breakdown data available.</div>';
+    return;
+  }
+
+  const labels = Object.keys(data);
+  const vals   = labels.map(l=>data[l]);
+  const cols   = labels.map(l=>scheme[l]||'#9ca3af');
+
+  cont.innerHTML = `<div style="font-size:9.5px;color:#6b7280;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px;">
+    ${type==='ethnic'?'Ethnicity':'Language'} Breakdown</div>
+    <canvas id="${containerId}-cv" width="210" height="140"></canvas>`;
+
+  const cv = document.getElementById(`${containerId}-cv`);
+  if (!cv) return;
+  if (_charts[containerId]) _charts[containerId].destroy();
+  _charts[containerId] = new Chart(cv, {
+    type:'doughnut',
+    data:{labels, datasets:[{data:vals,backgroundColor:cols,borderWidth:1,borderColor:'#fff'}]},
+    options:{
+      responsive:false, maintainAspectRatio:false,
+      plugins:{
+        legend:{position:'right',labels:{font:{size:8},color:'#374151',boxWidth:8,padding:3}},
+        tooltip:{callbacks:{label:c=>`${c.label}: ${c.parsed.toFixed(1)}%`}}
+      }
+    }
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   LAYER TOGGLE
+───────────────────────────────────────────────────────────────── */
+window.toggleLayer = async function(cb, name) {
+  // Show/hide opacity row
+  const opRow = document.getElementById(`op-${name}`);
+
+  if (!cb.checked) {
+    const d = st.layers[name];
+    if (d) {
+      if (d.layer        && map.hasLayer(d.layer))        map.removeLayer(d.layer);
+      if (d.markersGroup && map.hasLayer(d.markersGroup)) map.removeLayer(d.markersGroup);
+      if (d.dotsGroup    && map.hasLayer(d.dotsGroup))    map.removeLayer(d.dotsGroup);
+      if (d.zh) map.off('zoomend', d.zh);
+      delete st.layers[name];
+    }
+    if (opRow) opRow.classList.add('hidden');
+    updateStats(); renderLegend(); return;
+  }
+
+  // Restore cached
+  if (st.layers[name]) {
+    const d = st.layers[name];
+    if (d.layer && !d.isPoint) d.layer.addTo(map);
+    if (d.markersGroup && !map.hasLayer(d.markersGroup)) d.markersGroup.addTo(map);
+    if (d.dotsGroup && map.getZoom()>=DOT_MIN_ZOOM) d.dotsGroup.addTo(map);
+    updatePointVis();
+    if (opRow) opRow.classList.remove('hidden');
+    updateStats(); renderLegend(); return;
+  }
+
+  setLoading(name, true);
+  try {
+    const r = await fetch(`data/${name}.fgb`);
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const feats = [];
+    for await (const f of flatgeobuf.deserialize(r.body)) feats.push(f);
+    if (!feats.length) throw new Error('Empty dataset');
+
+    await buildLayer(name, feats);
+    if (opRow) opRow.classList.remove('hidden');
+    updateStats(); renderLegend();
+  } catch(e) {
+    log(`ERROR ${name}: ${e.message}`, true);
+    cb.checked = false;
+    if (opRow) opRow.classList.add('hidden');
+  }
+  setLoading(name, false);
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   BUILD LAYER
+───────────────────────────────────────────────────────────────── */
+async function buildLayer(name, feats) {
+  const cfg       = CAT_CFG[name];
+  const isBlue    = BLUE_LAYERS.has(name);
+  const baseColor = isBlue ? BLUE : (colorMap[name]||'#06b6d4');
+
+  const g0 = feats[0]?.geometry?.type||'';
+  const isPoint  = g0==='Point'||g0==='MultiPoint';
+  const isDemog  = cfg && (cfg.type==='ethnic'||cfg.type==='language');
+  const isGeol   = cfg?.type==='geology';
+  const isIMD    = cfg?.type==='imd';
+
+  // Detect categorical field
+  let field = null;
+  if (cfg) field = detectField(feats, cfg.hint, cfg.scheme);
+  log(`${name}: field="${field||'—'}"`);
+
+  // IMD range
+  let imdMin=Infinity, imdMax=-Infinity;
+  if (isIMD && field) {
+    feats.forEach(f=>{
+      const v=f.properties?.[field];
+      if(typeof v==='number'){imdMin=Math.min(imdMin,v);imdMax=Math.max(imdMax,v);}
+    });
+  }
+
+  const dotsGroup = L.featureGroup();
+
+  /* ── GeoJSON layer ── */
+  const gj = L.geoJSON({type:'FeatureCollection',features:feats}, {
+
+    style(feat){
+      const p = feat.properties||{};
+      if (isBlue)
+        return {color:BLUE,weight:1.5,opacity:0.9,fillColor:BLUE,fillOpacity:0.5};
+      if (isDemog && field) {
+        const raw   = p[field];
+        const vStr  = raw!=null ? String(raw) : '';
+        const mixed = isMixed(vStr);
+        const col   = resolveColor(vStr, cfg.scheme);
+        return {
+          color: mixed ? '#94a3b8' : (col||'#bdc3c7'),
+          weight:0.8, opacity:0.75,
+          fillColor: mixed ? 'transparent' : (col||'#bdc3c7'),
+          fillOpacity: mixed ? 0 : 0.65
+        };
+      }
+      if (isGeol && field) {
+        const raw = p[field];
+        const col = raw ? (resolveColor(String(raw),GEOLOGY_COLORS)||'#bdc3c7') : '#bdc3c7';
+        return {color:col,weight:0.6,opacity:0.7,fillColor:col,fillOpacity:0.72};
+      }
+      if (isIMD && field) {
+        const v = p[field];
+        const col = typeof v==='number' ? imdRamp(v,imdMin,imdMax) : '#e5e7eb';
+        return {color:'#334155',weight:0.5,opacity:0.7,fillColor:col,fillOpacity:0.85};
+      }
+      return {color:baseColor,weight:1.5,opacity:0.85,fillColor:baseColor,fillOpacity:0.5};
+    },
+
+    pointToLayer(feat, latlng) {
+      if (!isPoint) return undefined;
+      const ic = POI[name];
+      if (ic) {
+        return L.marker(latlng, {icon: L.divIcon({
+          className:'',
+          html:`<div class="poi-pin" style="background:${ic.bg};color:${ic.col};">
+                  <i class="fa-solid ${ic.icon}"></i></div>`,
+          iconSize:[26,26], iconAnchor:[13,13]
+        })});
+      }
+      return L.circleMarker(latlng,
+        {radius:5,fillColor:baseColor,color:'#fff',weight:1.5,fillOpacity:0.9});
+    },
+
+    onEachFeature(feat, lyr) {
+      if (!isPoint) {
+        // Mixed ward: no popup, no interaction
+        if (isDemog && field) {
+          const v = feat.properties?.[field];
+          if (v!=null && isMixed(String(v))) { lyr.options.interactive=false; return; }
+        }
+      }
+      if (isPoint) {
+        // Label from 'name' field (start closed; updatePointVis opens at LABEL_ZOOM)
+        const p = feat.properties || {};
+        const nm = p.name || p.Name || p.NAME || p.name_en || p.title || p.Title || '';
+        if (nm) {
+          lyr.bindTooltip(String(nm), {
+            permanent:true, direction:'top',
+            className:'poi-label', offset:[0,-13]
+          });
+          // Re-apply per-layer hide state when marker becomes visible (e.g. uncluster)
+          lyr.on('tooltipopen', ev => {
+            const el = ev.tooltip?._container;
+            if (!el) return;
+            const d2 = st.layers[name];
+            if (d2 && d2.labelsOn === false) el.setAttribute('data-layer-hide','1');
+            else el.removeAttribute('data-layer-hide');
+          });
+        }
+      }
+      attachPopup(name, feat, lyr);
+    }
+  });
+
+  /* ── Mixed-ward dots (static, unclickable) ── */
+  if (isDemog && field) {
+    feats.forEach(feat => {
+      const p   = feat.properties||{};
+      const raw = p[field];
+      if (!raw || !isMixed(String(raw))) return;
+
+      // Find top group by secondary fields or best numeric value
+      const scheme = cfg.scheme;
+      const schemeKeys = Object.keys(scheme).filter(k=>!isMixed(k));
+      let topGroup = null;
+      const topKey = Object.keys(p).find(k=>k.toLowerCase().includes('top')||k.toLowerCase().includes('leading'));
+      if (topKey && p[topKey]) topGroup = String(p[topKey]);
+
+      if (!topGroup) {
+        let best=null, bestV=-1;
+        for (const k in p) {
+          const v = p[k];
+          if (typeof v!=='number'||v<=0) continue;
+          const cat = schemeKeys.find(c=>
+            k.toLowerCase().includes(c.toLowerCase().replace(/ /g,'_').slice(0,5)));
+          if (cat && v>bestV) { bestV=v; best=cat; }
+        }
+        topGroup = best;
+      }
+
+      const dotColor = topGroup ?
+        (resolveColor(topGroup,scheme)||'#94a3b8') : '#94a3b8';
+
+      const geom = feat.geometry;
+      let centroid = null;
+      if      (geom.type==='Polygon')      centroid = avgCoords(geom.coordinates[0]);
+      else if (geom.type==='MultiPolygon') centroid = avgCoords(geom.coordinates[0][0]);
+      if (!centroid) return;
+
+      const dot = L.circleMarker([centroid[1],centroid[0]], {
+        radius:4, fillColor:dotColor, color:'#1e293b',
+        weight:1.2, fillOpacity:0.9, interactive:false
+      });
+      dotsGroup.addLayer(dot);
+    });
+  }
+
+  /* ── Point clustering ── */
+  let markersGroup = null;
+  if (isPoint) {
+    markersGroup = L.markerClusterGroup({
+      maxClusterRadius:50, disableClusteringAtZoom:16,
+      iconCreateFunction(cluster) {
+        const ic = POI[name];
+        const n  = cluster.getChildCount();
+        const bg = ic ? ic.bg : '#374151';
+        return L.divIcon({
+          className:'',
+          html:`<div style="background:${bg};color:#fff;width:30px;height:30px;border-radius:50%;
+            display:flex;align-items:center;justify-content:center;font-size:10.5px;
+            font-weight:800;border:2.5px solid #fff;box-shadow:0 2px 7px rgba(0,0,0,0.4);">${n}</div>`,
+          iconSize:[30,30], iconAnchor:[15,15]
+        });
+      }
+    });
+    gj.eachLayer(l=>{ if(l.getLatLng) markersGroup.addLayer(l); });
+    gj.clearLayers();
+    markersGroup.addTo(map); // always visible; clustering handles density
+  } else {
+    gj.addTo(map);
+  }
+
+  // Add dots if zoom already adequate
+  if (dotsGroup.getLayers().length && map.getZoom()>=DOT_MIN_ZOOM) dotsGroup.addTo(map);
+
+  st.layers[name] = {
+    layer:gj, markersGroup,
+    dotsGroup: dotsGroup.getLayers().length ? dotsGroup : null,
+    zh: null, color:baseColor,
+    featureCount:feats.length,
+    isDemog, isGeol, isIMD, isPoint,
+    scheme: cfg?.scheme||null, field,
+    imdMin, imdMax
+  };
+
+  log(`✓ ${name}: ${feats.length} features`);
+  updatePointVis();
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   VISIBILITY CONTROL (zoom-dependent)
+───────────────────────────────────────────────────────────────── */
+function updatePointVis() {
+  const z = map.getZoom();
+  const mapEl = map.getContainer();
+  // Toggle CSS class for zoom-based label visibility
+  if (z >= LABEL_ZOOM) mapEl.classList.add('show-labels');
+  else                 mapEl.classList.remove('show-labels');
+}
+function updateDotVis() {
+  const z = map.getZoom();
+  Object.values(st.layers).forEach(d => {
+    if (!d.dotsGroup) return;
+    if (z>=DOT_MIN_ZOOM && !map.hasLayer(d.dotsGroup)) d.dotsGroup.addTo(map);
+    if (z< DOT_MIN_ZOOM &&  map.hasLayer(d.dotsGroup)) map.removeLayer(d.dotsGroup);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   OPACITY
+───────────────────────────────────────────────────────────────── */
+window.setOpacity = function(name, v) {
+  const d = st.layers[name];
+  if (!d) return;
+  const op = parseFloat(v);
+  d.layer.eachLayer(l=>{
+    if(l.setStyle) l.setStyle({opacity:op, fillOpacity:op*0.8});
+    if(l.setOpacity) l.setOpacity(op);
+  });
+  if(d.dotsGroup) d.dotsGroup.eachLayer(l=>{if(l.setStyle)l.setStyle({fillOpacity:op});});
+  // Update slider gradient
+  const slider = document.querySelector(`#op-${name} input`);
+  if (slider) slider.style.setProperty('--v', (op*100)+'%');
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   FAVOURITES
+───────────────────────────────────────────────────────────────── */
+window.toggleFav = function(name, btn) {
+  if (st.favs.has(name)) st.favs.delete(name);
+  else st.favs.add(name);
+  const inFav = st.favs.has(name);
+  // Sync star icons
+  document.querySelectorAll(`[data-fav="${name}"]`).forEach(b => b.classList.toggle('on', inFav));
+  // Hide original litem + its op-row from main group when favourited
+  document.querySelectorAll(`.litem[data-fn="${name}"]`).forEach(li => {
+    if (li.closest('#fav-body')) return; // skip fav-section copies
+    li.style.display = inFav ? 'none' : '';
+  });
+  const origOp = document.querySelector(`#layers-root #op-${name}`);
+  if (origOp) origOp.style.display = inFav ? 'none' : '';
+  renderFavs();
+};
+
+function renderFavs() {
+  const body = document.getElementById('fav-body');
+  const sect = document.getElementById('fav-section');
+  body.innerHTML = '';
+  if (!st.favs.size) { sect.style.display='none'; return; }
+  sect.style.display = '';
+  st.favs.forEach(f => {
+    const ic = POI[f]?.icon||'fa-layer-group';
+    const on = !!(st.layers[f]?.layer && map.hasLayer(st.layers[f].layer));
+    body.insertAdjacentHTML('beforeend', buildItem(f, ic, on));
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SEARCH
+───────────────────────────────────────────────────────────────── */
+function filterLayers(q) {
+  const ql = q.toLowerCase();
+  document.querySelectorAll('.litem[data-fn]').forEach(el=>{
+    if (el.closest('#fav-body')) return; // skip fav section
+    const fn   = (el.dataset.fn||'').toLowerCase().replace(/_/g,' ');
+    const inFav = st.favs.has(el.dataset.fn||'');
+    el.style.display = (!inFav && fn.includes(ql)) ? '' : 'none';
+    const op = document.querySelector(`#layers-root #op-${el.dataset.fn}`);
+    if (op) op.style.display = (!inFav && fn.includes(ql)) ? '' : 'none';
+  });
+  document.querySelectorAll('#layers-root .layer-group').forEach(grp=>{
+    const any = [...grp.querySelectorAll('.litem')].some(i=>i.style.display!=='none');
+    grp.style.display = (any||!q) ? '' : 'none';
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   LAYER ITEM HTML
+───────────────────────────────────────────────────────────────── */
+function buildItem(name, icon, checked=false) {
+  const label = name.replace(/_/g,' ');
+  const isFav = st.favs.has(name);
+  const isPoi = !!POI[name];
+  const iconHtml = isPoi
+    ? `<i class="fa-solid ${icon} litem-icon" style="color:${colorMap[name]||'#64748b'};"></i>`
+    : `<div style="width:11px;height:11px;background:${colorMap[name]||'#64748b'};border:1px solid rgba(255,255,255,0.15);flex-shrink:0;border-radius:1px;"></div>`;
+  const labelBtn = isPoi
+    ? `<button class="litem-label on" id="lbl-${name}"
+        onclick="event.stopPropagation();if(st.layers['${name}'])toggleLayerLabels('${name}',this)" title="Toggle labels">
+        <i class="fa-solid fa-tag"></i></button>`
+    : '';
+  return `
+    <div class="litem" data-fn="${name}" draggable="true"
+      ondragstart="itemDragStart(event,'${name}')" ondragend="itemDragEnd(event)"
+      ondragover="itemDragOver(event)" ondrop="itemDrop(event,'${name}')">
+      <input type="checkbox" ${checked?'checked':''} data-layer="${name}"
+        onchange="toggleLayer(this,'${name}')">
+      ${iconHtml}
+      <span class="litem-name" id="ln-${name}" title="${label}">${label}</span>
+      ${labelBtn}
+      <button class="litem-star${isFav?' on':''}" data-fav="${name}"
+        onclick="event.stopPropagation();toggleFav('${name}',this)" title="Favourite">
+        <i class="fa-solid fa-star"></i>
+      </button>
+    </div>
+    <div class="op-row hidden" id="op-${name}">
+      <input type="range" class="op-slider" min="0" max="1" step="0.05" value="0.8"
+        oninput="setOpacity('${name}',this.value)">
+    </div>`;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   RENDER LAYER LIST
+───────────────────────────────────────────────────────────────── */
+function renderLayerList() {
+  const root = document.getElementById('layers-root');
+  root.innerHTML = '';
+  Object.entries(LAYER_GROUPS).forEach(([grpName, grpCfg]) => {
+    const el = document.createElement('div');
+    el.className = 'layer-group';
+    el.dataset.grp = grpName;
+    el.setAttribute('draggable','true');
+    el.addEventListener('dragstart', e => grpDragStart(e, grpName, el));
+    el.addEventListener('dragend',   e => grpDragEnd(e, el));
+    el.addEventListener('dragover',  e => grpDragOver(e, el));
+    el.addEventListener('drop',      e => grpDrop(e, grpName, el));
+    el.innerHTML = `
+      <div class="lg-head collapsed" onclick="toggleGroup(this)">
+        <span><i class="fa-solid ${grpCfg.icon}" style="margin-right:5px;font-size:9px;"></i>${grpName.toUpperCase()}</span>
+        <span class="chevron">&#8964;</span>
+      </div>
+      <div class="lg-body hidden" id="lgb-${grpName.replace(/\s/g,'-')}"></div>`;
+    root.appendChild(el);
+    const body = el.querySelector('.lg-body');
+    grpCfg.layers.forEach(f => {
+      const ic = POI[f]?.icon || groupDefaultIcon(grpName);
+      body.insertAdjacentHTML('beforeend', buildItem(f, ic, false));
+    });
+  });
+}
+
+function groupDefaultIcon(g) {
+  return {
+    'Demographics':'fa-users','Nature':'fa-leaf','Road Trips':'fa-route',
+    'Amenities':'fa-kit-medical'
+  }[g]||'fa-layer-group';
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   LEGEND
+───────────────────────────────────────────────────────────────── */
+function renderLegend() {
+  const box    = document.getElementById('leg-box');
+  const empty  = document.getElementById('leg-empty');
+  box.innerHTML = '';
+
+  const active = Object.entries(st.layers)
+    .filter(([,d]) => d.layer && map.hasLayer(d.layer));
+
+  if (!active.length) { empty.style.display=''; return; }
+  empty.style.display = 'none';
+
+  active.forEach(([name, d]) => {
+    const label = name.replace(/_/g,' ');
+    let body = '';
+
+    if ((d.isDemog) && d.scheme && d.field) {
+      const seen = new Set();
+      body = '<div class="leg-cats">';
+      Object.entries(d.scheme).forEach(([cat, col]) => {
+        const k = (col||'__')+cat; if(seen.has(k)) return; seen.add(k);
+        const mix  = isMixed(cat);
+        const null_col = col||'transparent';
+        const sw   = mix
+          ? `<div style="width:8px;height:8px;border-radius:50%;background:${null_col};border:1px solid #94a3b8;"></div>`
+          : `<div class="leg-cat-sw" style="background:${null_col};${!col?'outline:1px dashed #94a3b8;':''}"></div>`;
+        const note = mix ? ' <em style="color:#475569;font-size:9px;">(dot)</em>' : '';
+        body += `<div class="leg-cat-row">${sw}
+          <span class="leg-cat-lbl">${cat}${note}</span></div>`;
+      });
+      body += '<div style="margin-top:5px;padding-top:5px;border-top:1px solid #1a2744;font-size:9.5px;color:#475569;">&#9679; dot = mixed ward (top-group colour)</div>';
+      body += '</div>';
+    }
+
+    else if (d.isGeol && d.scheme && d.field) {
+      const seen = new Set();
+      body = '<div class="leg-cats">';
+      Object.entries(GEOLOGY_COLORS).forEach(([cat,col])=>{
+        if(seen.has(col)) return; seen.add(col);
+        body+=`<div class="leg-cat-row">
+          <div class="leg-cat-sw" style="background:${col};"></div>
+          <span class="leg-cat-lbl">${cat}</span></div>`;
+      });
+      body += '</div>';
+    }
+
+    else if (d.isIMD && d.field) {
+      body = `
+        <div style="padding:5px 10px 9px;">
+          <div class="leg-gradient" style="background:linear-gradient(to right,#ffff00,#ff8000,#ff0000);"></div>
+          <div class="leg-grad-lbls">
+            <span>Low deprivation (${isFinite(d.imdMin)?d.imdMin.toFixed(0):'-'})</span>
+            <span>High (${isFinite(d.imdMax)?d.imdMax.toFixed(0):'-'})</span>
+          </div>
+        </div>`;
+    }
+
+    else {
+      body = `<div style="padding:3px 10px 8px;">
+        <div class="leg-cat-row">
+          <div class="leg-cat-sw" style="background:${d.color};"></div>
+          <span class="leg-cat-lbl">${label}</span>
+        </div></div>`;
+    }
+
+    box.insertAdjacentHTML('beforeend', `
+      <div class="leg-entry">
+        <div class="leg-entry-hdr">
+          <div class="leg-swatch" style="background:${d.color};border-color:${d.color};"></div>
+          <div class="leg-entry-name" title="${label}">${label}</div>
+        </div>
+        ${body}
+      </div>`);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   STATS
+───────────────────────────────────────────────────────────────── */
+function updateStats() { /* stats panel removed */ }
+
+/* ─────────────────────────────────────────────────────────────────
+   LOADING STATE
+───────────────────────────────────────────────────────────────── */
+function setLoading(name, on) {
+  const el = document.getElementById(`ln-${name}`);
+  if (el) el.classList.toggle('loading', on);
+  const cb = document.querySelector(`[data-layer="${name}"]`);
+  if (cb) cb.disabled = on;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   LABELS TOGGLE (per-layer, for POI point layers)
+───────────────────────────────────────────────────────────────── */
+window.toggleLayerLabels = function(name, btn) {
+  const d = st.layers[name];
+  if (!d) return;
+  d.labelsOn = (d.labelsOn === false) ? true : false;
+  const hide = (d.labelsOn === false);
+  btn.classList.toggle('on', !hide);
+  // Toggle data-layer-hide attribute on all tooltips belonging to this layer
+  if (d.markersGroup) {
+    d.markersGroup.eachLayer(l => {
+      const tt = l.getTooltip?.();
+      if (!tt) return;
+      const el = tt._container;
+      if (!el) return;
+      if (hide) el.setAttribute('data-layer-hide','1');
+      else el.removeAttribute('data-layer-hide');
+    });
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   MEASURE TOOL  (functional custom implementation)
+───────────────────────────────────────────────────────────────── */
+window.toggleMeasure = function() {
+  st.measuring = !st.measuring;
+  const ctrlBtn = document.getElementById('ctrl-measure');
+  if (ctrlBtn) ctrlBtn.classList.toggle('active', st.measuring);
+  const panel = document.getElementById('measure-panel');
+  if (st.measuring) {
+    panel.classList.add('vis');
+    map.getContainer().style.cursor = 'crosshair';
+    map.on('click', onMClick);
+    map.on('dblclick', onMDbl);
+    log('Measure ON — click to add points, double-click to finish, ESC to cancel');
+  } else {
+    clearMeasure();
+  }
+};
+
+function onMClick(e) {
+  if (!st.measuring) return;
+  L.circleMarker(e.latlng, {
+    radius:4, fillColor:'#fbbf24', color:'#0f172a', weight:1.5, fillOpacity:1
+  }).addTo(st.measureLayer);
+
+  if (st.mPts.length) {
+    const prev = st.mPts[st.mPts.length-1];
+    L.polyline([prev, e.latlng], {
+      color:'#fbbf24', weight:2.5, opacity:0.9, dashArray:'6,4'
+    }).addTo(st.measureLayer);
+    st.mTotal += prev.distanceTo(e.latlng);
+  }
+  st.mPts.push(e.latlng);
+  document.getElementById('m-dist').textContent = (st.mTotal/1000).toFixed(2)+' km';
+}
+
+function onMDbl() {
+  log(`Measure: ${(st.mTotal/1000).toFixed(2)} km total / ${st.mPts.length} points`);
+  map.off('click', onMClick);
+  map.off('dblclick', onMDbl);
+  st.measuring = false;
+  const ctrlBtn = document.getElementById('ctrl-measure');
+  if (ctrlBtn) ctrlBtn.classList.remove('active');
+  map.getContainer().style.cursor = '';
+}
+
+window.clearMeasure = function() {
+  st.measuring=false; st.mPts=[]; st.mTotal=0;
+  map.off('click',onMClick); map.off('dblclick',onMDbl);
+  st.measureLayer.clearLayers();
+  document.getElementById('m-dist').textContent='0.00 km';
+  document.getElementById('measure-panel').classList.remove('vis');
+  const ctrlBtn = document.getElementById('ctrl-measure');
+  if (ctrlBtn) ctrlBtn.classList.remove('active');
+  map.getContainer().style.cursor='';
+};
+
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && st.measuring) clearMeasure();
+});
+
+/* ─────────────────────────────────────────────────────────────────
+   LAYER SUMMARY
+───────────────────────────────────────────────────────────────── */
+window.layerSummary = function() {
+  const active = Object.entries(st.layers).filter(([,d])=>d.layer&&map.hasLayer(d.layer));
+  if(!active.length){log('No active layers',true);return;}
+  const lines = active.map(([n,d])=>`• ${n.replace(/_/g,' ')}: ${d.featureCount.toLocaleString()} features`);
+  alert('Active Layer Summary\n\n'+lines.join('\n'));
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   DRAG-AND-DROP  (layer items within a group, and group reordering)
+───────────────────────────────────────────────────────────────── */
+let _dragItemName = null;
+let _dragGrpName  = null;
+
+// Item-level drag
+function itemDragStart(e, name) {
+  _dragItemName = name;
+  e.stopPropagation();
+  requestAnimationFrame(() => e.target.closest('.litem').classList.add('dragging'));
+  e.dataTransfer.effectAllowed = 'move';
+}
+function itemDragEnd(e) {
+  document.querySelectorAll('.litem.dragging,.litem.drag-over').forEach(el=>{
+    el.classList.remove('dragging','drag-over');
+  });
+  _dragItemName = null;
+}
+function itemDragOver(e) {
+  if (!_dragItemName) return;
+  e.preventDefault(); e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.litem.drag-over').forEach(el=>el.classList.remove('drag-over'));
+  e.currentTarget.classList.add('drag-over');
+}
+function itemDrop(e, targetName) {
+  e.preventDefault(); e.stopPropagation();
+  const src = _dragItemName;
+  if (!src || src === targetName) { return; }
+  const srcEl  = document.querySelector(`#layers-root .litem[data-fn="${src}"]`);
+  const tgtEl  = document.querySelector(`#layers-root .litem[data-fn="${targetName}"]`);
+  const srcOp  = document.querySelector(`#layers-root #op-${src}`);
+  if (!srcEl || !tgtEl || srcEl.parentNode !== tgtEl.parentNode) return;
+  tgtEl.parentNode.insertBefore(srcEl, tgtEl);
+  if (srcOp) tgtEl.parentNode.insertBefore(srcOp, tgtEl);
+  // Re-add src item's op-row after it
+  if (srcOp) srcEl.after(srcOp);
+}
+
+// Group-level drag
+function grpDragStart(e, grpName, el) {
+  _dragGrpName = grpName;
+  requestAnimationFrame(() => el.classList.add('dragging'));
+  e.dataTransfer.effectAllowed = 'move';
+}
+function grpDragEnd(e, el) {
+  document.querySelectorAll('.layer-group.dragging,.layer-group.drag-grp-over').forEach(g=>{
+    g.classList.remove('dragging','drag-grp-over');
+  });
+  _dragGrpName = null;
+}
+function grpDragOver(e, el) {
+  if (!_dragGrpName) return;
+  e.preventDefault();
+  document.querySelectorAll('.layer-group.drag-grp-over').forEach(g=>g.classList.remove('drag-grp-over'));
+  el.classList.add('drag-grp-over');
+}
+function grpDrop(e, targetGrp, el) {
+  e.preventDefault();
+  const src = _dragGrpName;
+  if (!src || src === targetGrp) return;
+  const root   = document.getElementById('layers-root');
+  const srcEl  = root.querySelector(`.layer-group[data-grp="${src}"]`);
+  const tgtEl  = el;
+  if (!srcEl || !tgtEl) return;
+  root.insertBefore(srcEl, tgtEl);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   UTILITY FUNCTIONS
+───────────────────────────────────────────────────────────────── */
+function isMixed(s) {
+  const n = s.toLowerCase().trim();
+  return n.includes('mixed')||n==='no majority';
+}
+
+function resolveColor(val, scheme) {
+  if(!scheme) return null;
+  if(scheme[val]!==undefined) return scheme[val];
+  const vl = val.toLowerCase().trim();
+  const k  = Object.keys(scheme).find(sk=>{
+    const sl=sk.toLowerCase().trim();
+    return sl===vl||vl.includes(sl)||sl.includes(vl);
+  });
+  return k!==undefined ? scheme[k] : null;
+}
+
+function detectField(feats, hint, scheme) {
+  if(!feats.length) return null;
+  const keys = Object.keys(feats[0].properties||{});
+  if(hint){
+    // Exact match
+    const hk=keys.find(k=>k.toLowerCase()===hint.toLowerCase());
+    if(hk) return hk;
+    // Starts-with match (6 chars)
+    const hp=keys.find(k=>k.toLowerCase().startsWith(hint.toLowerCase().slice(0,6)));
+    if(hp) return hp;
+    // Contains match
+    const hc=keys.find(k=>k.toLowerCase().includes(hint.toLowerCase().replace(/_/g,'').slice(0,5)));
+    if(hc) return hc;
+  }
+  // IMD fallback: any numeric field with imd/score/index/deprivation in name
+  if(!scheme) {
+    const imdFallback = keys.find(k=>{
+      const kl=k.toLowerCase();
+      return kl.includes('imd')||kl.includes('score')||kl.includes('index')||kl.includes('depri');
+    });
+    if(imdFallback) return imdFallback;
+    // Last resort: first numeric field
+    const firstNum = keys.find(k=>feats.slice(0,5).some(f=>typeof f.properties[k]==='number'));
+    return firstNum||null;
+  }
+  // Scheme score-based detection
+  const schVals = Object.keys(scheme).map(k=>k.toLowerCase().trim());
+  const scores={}; keys.forEach(k=>scores[k]=0);
+  feats.slice(0,25).forEach(f=>{
+    const p=f.properties||{};
+    keys.forEach(k=>{
+      const v=String(p[k]||'').toLowerCase().trim();
+      if(schVals.some(s=>s===v||v.includes(s)||s.includes(v))) scores[k]++;
+    });
+  });
+  const best=Object.entries(scores).sort((a,b)=>b[1]-a[1])[0];
+  return best&&best[1]>0 ? best[0] : null;
+}
+
+function avgCoords(ring) {
+  if(!ring||!ring.length) return null;
+  let x=0,y=0;
+  ring.forEach(c=>{x+=c[0];y+=c[1];});
+  return [x/ring.length, y/ring.length];
+}
+
+function imdRamp(v, min, max) {
+  const t = max>min ? Math.max(0,Math.min(1,(v-min)/(max-min))) : 0;
+  // Low=yellow(255,255,0) → Mid=orange(255,128,0) → High=red(255,0,0)
+  const r=255, g=Math.round(255*(1-t)), b=0;
+  return `rgb(${r},${g},${b})`;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   INIT
+───────────────────────────────────────────────────────────────── */
+renderLayerList();
+updateStats();
+log('Western Cape Map Explorer — ready');
+</script>
+</body>
+</html>
